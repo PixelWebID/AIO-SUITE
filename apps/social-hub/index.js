@@ -1,27 +1,26 @@
 /*
- * Social hub service for the AIO Suite.
+ * Entry point for the Social Hub microservice.
  *
- * This service exposes endpoints for posting content to social media
- * platforms.  In this skeleton implementation it simply returns a
- * success response without contacting any external APIs.
+ * This service coordinates social network posting, caption generation, and
+ * scheduling using external APIs. The current implementation wires together
+ * routers and service skeletons so CI and deployment pipelines can be verified.
  */
 
 const express = require('express');
+const { loadConfig } = require('./config');
+const publishRouter = require('./routes/publish');
+
 const app = express();
+const config = loadConfig();
 
 app.use(express.json());
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'social-hub', version: config.version });
 });
 
-app.post('/publish', (req, res) => {
-  const { title, url } = req.body;
-  console.log(`Publishing article ${title} at ${url}`);
-  res.json({ status: 'ok', result: { platform: 'x', posted: true } });
-});
+app.use('/api', publishRouter);
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  console.log(`Social hub listening on port ${PORT}`);
+app.listen(config.port, () => {
+  console.log(`Social hub listening on port ${config.port}`);
 });

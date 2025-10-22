@@ -1,32 +1,57 @@
-(function () {
-  const root = document.getElementById('aio-root');
-  if (!root) return;
-  // Build a simple UI for demonstration.  In a real project this would be
-  // replaced with a React or other framework application.
-  root.innerHTML = `
-    <div style="margin:10px 0;">
-      <label for="aio-keyword">Keyword:</label>
-      <input id="aio-keyword" placeholder="Enter a keyword" style="margin-right:8px; padding:4px;" />
-      <button id="aio-generate" class="button button-primary">Generate</button>
-    </div>
-    <div id="aio-output" style="background:#fff; border:1px solid #ccd0d4; padding:10px;"></div>
-  `;
-  const btn = document.getElementById('aio-generate');
-  btn.addEventListener('click', async () => {
-    const keywordEl = document.getElementById('aio-keyword');
-    const keyword = keywordEl.value.trim();
-    if (!keyword) {
-      alert('Please enter a keyword');
-      return;
+import { createEditorPanel } from './components/Editor.jsx';
+import { createPreviewPanel } from './components/Preview.jsx';
+import { createHistoryPanel } from './components/History.jsx';
+
+const TABS = [
+  { id: 'editor', label: 'Editor', factory: createEditorPanel },
+  { id: 'preview', label: 'Preview', factory: createPreviewPanel },
+  { id: 'history', label: 'History', factory: createHistoryPanel },
+];
+
+function renderTabs(root) {
+  const header = document.createElement('div');
+  header.className = 'aio-tabs';
+
+  const content = document.createElement('div');
+  content.className = 'aio-panel';
+
+  TABS.forEach((tab, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'aio-tab';
+    button.dataset.tab = tab.id;
+    button.textContent = tab.label;
+    button.addEventListener('click', () => setActiveTab(tab.id, header, content));
+    if (index === 0) {
+      button.classList.add('is-active');
+      content.appendChild(tab.factory());
     }
-    const out = document.getElementById('aio-output');
-    out.innerHTML = 'Generating...';
-    try {
-      const response = await fetch('/wp-json/aio/v1/ping');
-      const data = await response.json();
-      out.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
-    } catch (err) {
-      out.innerHTML = `<strong>Error:</strong> ${err.message}`;
-    }
+    header.appendChild(button);
   });
-})();
+
+  root.innerHTML = '';
+  root.appendChild(header);
+  root.appendChild(content);
+}
+
+function setActiveTab(tabId, header, content) {
+  header.querySelectorAll('.aio-tab').forEach((node) => {
+    node.classList.toggle('is-active', node.dataset.tab === tabId);
+  });
+
+  const tab = TABS.find((item) => item.id === tabId);
+  if (!tab) {
+    return;
+  }
+
+  content.innerHTML = '';
+  content.appendChild(tab.factory());
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const root = document.getElementById('aio-root');
+  if (!root) {
+    return;
+  }
+  renderTabs(root);
+});
