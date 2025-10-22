@@ -1,0 +1,15 @@
+{
+  "name": "social-hub",
+  "version": "0.1.0",
+  "description": "Social media integration service for the AIO Suite",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "AIO Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
