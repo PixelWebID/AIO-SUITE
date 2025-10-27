@@ -1,46 +1,62 @@
-﻿export function createPreviewPanel() {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'aio-preview';
+﻿
+function sanitize(html) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html || '', 'text/html');
+  doc.querySelectorAll('script, style').forEach((node) => node.remove());
+  return doc.body.innerHTML;
+}
 
-  const title = document.createElement('h2');
-  title.textContent = 'Preview';
+function renderWarnings(list, warnings) {
+  list.innerHTML = '';
+  if (!warnings || !warnings.length) {
+    const item = document.createElement('span');
+    item.className = 'aio-badge aio-badge--success';
+    item.textContent = 'No warnings';
+    list.appendChild(item);
+    return;
+  }
+  warnings.forEach((code) => {
+    const badge = document.createElement('span');
+    badge.className = 'aio-badge aio-badge--warning';
+    badge.textContent = code;
+    list.appendChild(badge);
+  });
+}
 
-  const status = document.createElement('div');
-  status.className = 'aio-preview-status';
-  status.innerHTML = '<strong>Status:</strong> Belum ada draft.';
+export function createPreviewPanel() {
+  const container = document.createElement('div');
+  container.className = 'aio-preview-panel';
 
   const metaBox = document.createElement('div');
   metaBox.className = 'aio-preview-meta';
 
-  const article = document.createElement('article');
-  article.className = 'aio-preview-content';
-  article.innerHTML = '<p>Draft akan ditampilkan setelah proses generate selesai.</p>';
+  const warningBox = document.createElement('div');
+  warningBox.className = 'aio-preview-warnings';
 
-  const warnings = document.createElement('div');
-  warnings.className = 'aio-preview-warnings';
-  warnings.innerHTML = '<h3>Peringatan</h3><ul><li>Tidak ada.</li></ul>';
+  const articleBox = document.createElement('article');
+  articleBox.className = 'aio-preview-article';
+  articleBox.innerHTML = '<p>Preview akan tampil di sini.</p>';
 
-  wrapper.append(title, status, metaBox, article, warnings);
+  container.append(metaBox, warningBox, articleBox);
 
-  wrapper.updatePreview = (data) => {
-    status.innerHTML = '<strong>Status:</strong> Draft terbaru siap ditinjau.';
-
-    const meta = data.meta || {};
+  function update(article, warnings = []) {
+    const meta = article.meta || {};
     metaBox.innerHTML = `
-      <div><strong>Judul:</strong> ${meta.title || 'Tanpa judul'}</div>
+      <div><strong>Judul:</strong> ${meta.title || '-'}</div>
       <div><strong>Deskripsi:</strong> ${meta.description || '-'}</div>
       <div><strong>Kata kunci:</strong> ${(meta.keywords || []).join(', ') || '-'}</div>
       <div><strong>Kategori:</strong> ${(meta.categories || []).join(', ') || '-'}</div>
-      <div><strong>Waktu baca:</strong> ~${meta.reading_time_minutes || 0} menit</div>
+      <div><strong>Waktu baca:</strong> ${meta.reading_time_minutes ? `${meta.reading_time_minutes} menit` : '—'}</div>
     `;
 
-    article.innerHTML = data.article_html;
+    renderWarnings(warningBox, warnings);
 
-    const warningList = data.warnings && data.warnings.length
-      ? data.warnings.map((item) => `<li>${item}</li>`).join('')
-      : '<li>Tidak ada.</li>';
-    warnings.innerHTML = `<h3>Peringatan</h3><ul>${warningList}</ul>`;
+    articleBox.innerHTML = sanitize(article.article_html || '');
+  }
+
+  return {
+    node: container,
+    update,
   };
-
-  return wrapper;
 }
+
