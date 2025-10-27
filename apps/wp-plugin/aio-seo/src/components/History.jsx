@@ -1,62 +1,71 @@
-function createHistoryItem(record) {
-  const item = document.createElement('li');
-  item.className = 'aio-history-item';
-  item.innerHTML = `
-    <header>
-      <strong>${record.title}</strong>
-      <time>${record.date}</time>
-    </header>
-    <p>${record.summary}</p>
-    <footer>
-      <span>Related: ${record.related.join(', ') || '—'}</span>
-      <button type="button" class="button-link" data-id="${record.id}">Load draft</button>
-    </footer>
-  `;
-  return item;
+﻿const env = window.AIO_SUITE_ENV || {};
+
+async function fetchHistory(limit = 12) {
+  const response = await fetch(`${env.restUrl}/history?limit=${limit}`, {
+    headers: { 'X-WP-Nonce': env.nonce },
+  });
+  if (!response.ok) {
+    throw new Error('Gagal memuat riwayat');
+  }
+  return response.json();
 }
 
-const MOCK_HISTORY = [
-  {
-    id: 'draft-001',
-    title: 'AI Content Guidelines',
-    summary: 'Initial draft exploring AI guidelines and publishing workflow.',
-    date: '2024-10-01',
-    related: ['workflow', 'guidelines'],
-  },
-  {
-    id: 'draft-002',
-    title: 'Bali Travel Trends',
-    summary: 'Outline generated from RSS feeds covering hospitality news.',
-    date: '2024-10-04',
-    related: ['travel', 'rss'],
-  },
-];
-
-export function createHistoryPanel() {
+export function createHistoryPanel(onSelect) {
   const container = document.createElement('div');
   container.className = 'aio-history';
 
   const title = document.createElement('h2');
-  title.textContent = 'History & Relations';
+  title.textContent = 'Riwayat & Relasi';
 
   const list = document.createElement('ul');
   list.className = 'aio-history-list';
-  MOCK_HISTORY.forEach((record) => list.appendChild(createHistoryItem(record)));
 
-  list.addEventListener('click', (event) => {
-    if (!(event.target instanceof HTMLElement)) {
-      return;
-    }
-    const id = event.target.dataset.id;
-    if (!id) {
-      return;
-    }
-    // TODO: fetch draft details from the backend.
-    console.log(`Load history item ${id}`);
-    event.preventDefault();
-  });
+  const emptyState = document.createElement('p');
+  emptyState.className = 'aio-history-empty';
+  emptyState.textContent = 'Belum ada riwayat.';
 
-  container.appendChild(title);
-  container.appendChild(list);
+  container.append(title, emptyState, list);
+
+  async function load() {
+    try {
+      const payload = await fetchHistory();
+      const history = payload.history || payload;
+      list.innerHTML = '';
+      if (!history.length) {
+        emptyState.style.display = 'block';
+        return;
+      }
+      emptyState.style.display = 'none';
+      history.forEach((record) => {
+        const item = document.createElement('li');
+        item.className = 'aio-history-item';
+        item.innerHTML = `
+          <header>
+            <strong>${record.meta?.title || record.keyword}</strong>
+            <time>${new Date(record.created_at || Date.now()).toLocaleString()}</time>
+          </header>
+          <p>${record.meta?.description || 'Tidak ada ringkasan.'}</p>
+          <footer>
+            <span>${(record.meta?.keywords || []).join(', ')}</span>
+            <button type="button" class="button-link">Muat draft</button>
+          </footer>
+        `;
+        const button = item.querySelector('button');
+        button.addEventListener('click', () => {
+          if (typeof onSelect === 'function') {
+            onSelect(record.id);
+          }
+        });
+        list.appendChild(item);
+      });
+    } catch (error) {
+      emptyState.style.display = 'block';
+      emptyState.textContent = error.message;
+    }
+  }
+
+  container.reload = load;
+  load();
+
   return container;
 }

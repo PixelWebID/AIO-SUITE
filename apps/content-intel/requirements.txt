@@ -4,3 +4,9 @@ pydantic
 httpx
 beautifulsoup4
 python-dotenv
+aiosqlite
+feedparser
+pytrends
+python-slugify
+pandas
+numpy

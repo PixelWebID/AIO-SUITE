@@ -1,6 +1,6 @@
 {
   "name": "social-hub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Social media integration service for the AIO Suite",
   "main": "index.js",
   "scripts": {

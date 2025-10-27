@@ -1,14 +1,29 @@
-import { createEditorPanel } from './components/Editor.jsx';
+﻿import { createEditorPanel } from './components/Editor.jsx';
 import { createPreviewPanel } from './components/Preview.jsx';
 import { createHistoryPanel } from './components/History.jsx';
 
-const TABS = [
-  { id: 'editor', label: 'Editor', factory: createEditorPanel },
-  { id: 'preview', label: 'Preview', factory: createPreviewPanel },
-  { id: 'history', label: 'History', factory: createHistoryPanel },
-];
+const TABS = [];
+
+function initialiseTabs() {\n  TABS.length = 0;
+  const editorPanel = createEditorPanel();
+  const historyPanel = createHistoryPanel((historyId) => {
+    if (typeof editorPanel.loadHistoryItem === 'function') {
+      editorPanel.loadHistoryItem(historyId);
+    }
+  });
+
+  document.addEventListener('aio:article-generated', () => {
+    if (typeof historyPanel.reload === 'function') {
+      historyPanel.reload();
+    }
+  });
+
+  TABS.push({ id: 'editor', label: 'Editor', node: editorPanel });
+  TABS.push({ id: 'history', label: 'History', node: historyPanel });
+}
 
 function renderTabs(root) {
+  initialiseTabs();
   const header = document.createElement('div');
   header.className = 'aio-tabs';
 
@@ -24,14 +39,13 @@ function renderTabs(root) {
     button.addEventListener('click', () => setActiveTab(tab.id, header, content));
     if (index === 0) {
       button.classList.add('is-active');
-      content.appendChild(tab.factory());
+      content.appendChild(tab.node);
     }
     header.appendChild(button);
   });
 
   root.innerHTML = '';
-  root.appendChild(header);
-  root.appendChild(content);
+  root.append(header, content);
 }
 
 function setActiveTab(tabId, header, content) {
@@ -45,7 +59,7 @@ function setActiveTab(tabId, header, content) {
   }
 
   content.innerHTML = '';
-  content.appendChild(tab.factory());
+  content.appendChild(tab.node);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -55,3 +69,5 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   renderTabs(root);
 });
+
+
