@@ -1,83 +1,62 @@
-"""Content gap analysis endpoints."""
+"""Gap analysis endpoint."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import textwrap
+from typing import List
 
-from ..models.schemas import ContentGapRequest, ContentGapResponse, GapInsight
+from fastapi import APIRouter, HTTPException, Query
+
+from ..models.schemas import GapRecommendation, GapResponse
 from ..services.scraper import gather_reference_content
 from ..services.trends import fetch_keyword_trends
-from ..utils.db import log_gap_job
+from ..utils.db import fetch_existing_keywords
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
-@router.post("/content_gap", response_model=ContentGapResponse)
-async def content_gap(payload: ContentGapRequest) -> ContentGapResponse:
-    """Perform an opinionated content-gap analysis against competitor URLs."""
+@router.get("/content_gap", response_model=GapResponse)
+async def content_gap(keyword: str = Query(...), geo: str = Query("ID")) -> GapResponse:
+    references = await gather_reference_content(keyword, geo)
+    if not references:
+        raise HTTPException(status_code=424, detail="Unable to gather references for gap analysis")
 
-    references = await gather_reference_content(
-        payload.keyword,
-        payload.geo,
-        competitors=[str(url) for url in payload.competitors],
-    )
-    trends = await fetch_keyword_trends(payload.keyword, payload.geo)
+    trends = await fetch_keyword_trends(keyword, geo)
+    existing_keywords = [kw.lower() for kw in fetch_existing_keywords()] + [keyword.lower()]
 
-    opportunity_score = 0.65 + min(len(trends), 5) * 0.03
-    geo_upper = payload.geo.upper()
-    action_items = [
-        "Bangun pilar konten baru yang mengelompokkan kata kunci informasional dan transaksional.",
-        "Perkuat bukti otoritas dengan data lokal dan kutipan ahli.",
-        "Optimalkan internal link menuju halaman kategori prioritas di sitemap.",
-    ]
+    missing_keywords = []
+    existing_related = []
+    for trend in trends:
+        (existing_related if trend.lower() in existing_keywords else missing_keywords).append(trend)
 
-    insights = [
-        GapInsight(
-            title="Peluang Topical Authority",
-            summary="Hanya sebagian kecil kompetitor yang memiliki hub konten mendalam dengan FAQ dan studi kasus lokal.",
-            difficulty="medium",
-            opportunity_score=round(min(opportunity_score, 0.92), 2),
-            action_items=action_items,
-            evidence_links=[ref.url for ref in references[:2]],
-        ),
-        GapInsight(
-            title="Schema & UX Improvisasi",
-            summary="Skema FAQ dan HowTo jarang ditemui, padahal volume pertanyaan meningkat dari Google Trends.",
-            difficulty="low",
-            opportunity_score=0.74,
-            action_items=[
-                "Tambahkan schema FAQ di artikel edukatif yang menargetkan kata kunci turunan.",
-                "Lengkapi elemen UX seperti tabel harga dan compare chart untuk meningkatkan dwell time.",
-            ],
-            evidence_links=[ref.url for ref in references[2:4]],
-        ),
-        GapInsight(
-            title="Konten Lokal Kurang Personal",
-            summary="Konten pesaing belum menyoroti kebiasaan dan budaya lokal sehingga kurang relevan bagi audiens target.",
-            difficulty="medium",
-            opportunity_score=0.68,
-            action_items=[
-                f"Masukkan studi kasus lokal yang menampilkan data perilaku pengguna {geo_upper}.",
-                "Libatkan narasumber lokal untuk menambah kredibilitas.",
-            ],
-            evidence_links=[ref.url for ref in references[-2:]],
-        ),
-    ]
+    recommendations: List[GapRecommendation] = []
+    for idx, ref in enumerate(references[:5]):
+        status = "missing" if idx < len(missing_keywords) else "existing"
+        focus_keyword = missing_keywords[idx] if idx < len(missing_keywords) else ref.title
+        outline = ref.outline[:4] or ["Pendahuluan", "Strategi", "Contoh Lokal", "CTA"]
+        recommendations.append(
+            GapRecommendation(
+                keyword=focus_keyword,
+                status=status,
+                headline=f"{focus_keyword.title()} Playbook {geo.upper()}",
+                outline=outline,
+                notes=f"Berdasarkan referensi {ref.domain}"
+            )
+        )
 
-    response = ContentGapResponse(
-        keyword=payload.keyword,
-        insights=insights,
+    curl = textwrap.dedent(
+        f"""
+        curl "http://localhost:8000/api/analysis/content_gap?keyword={keyword}&geo={geo}"
+        """
+    ).strip()
+
+    return GapResponse(
+        keyword=keyword,
+        geo=geo,
+        missing_keywords=missing_keywords,
+        existing_keywords=existing_related,
+        recommendations=recommendations,
         references=references,
         trend_topics=trends,
-        summary=(
-            f"Kompetisi {payload.keyword} masih longgar untuk konten berformat pilar dengan bukti lokal. "
-            "Prioritaskan integrasi schema dan pengalaman nyata untuk menutup kesenjangan."
-        ),
-        suggested_headlines=[
-            f"{payload.keyword.title()} Roadmap {payload.geo.upper()}",
-            f"Panduan Lokal {payload.keyword.lower()} dengan Studi Kasus Terkini",
-        ],
+        curl_example=curl,
     )
-
-    await log_gap_job(payload, response, trends=trends)
-    return response

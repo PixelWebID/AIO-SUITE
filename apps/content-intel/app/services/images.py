@@ -1,146 +1,122 @@
-"""Image sourcing helpers for Pexels, Pixabay, and custom AI generation."""
+"""Image sourcing helpers for Pexels/Pixabay/AI."""
 
 from __future__ import annotations
 
 from typing import List, Optional
 
-import asyncio
-
 import httpx
 
 from ..config import settings
 from ..models.schemas import ImageAsset
-from ..utils.notifications import notify_failure
 
-REQUEST_TIMEOUT = 15.0
+REQUEST_TIMEOUT = 20.0
 
 
-async def _fetch_pexels(keyword: str, limit: int) -> List[ImageAsset]:
-    if not settings.pexels_api_key:
-        return []
+async def search_image(keyword: str, *, limit: int = 4) -> List[ImageAsset]:
+    """Aggregate results from Pexels and Pixabay."""
 
-    headers = {"Authorization": settings.pexels_api_key}
-    params = {"query": keyword, "orientation": "landscape", "per_page": limit}
-
+    results: List[ImageAsset] = []
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        response = await client.get("https://api.pexels.com/v1/search", params=params, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+        if settings.pexels_api_key:
+            try:
+                response = await client.get(
+                    "https://api.pexels.com/v1/search",
+                    params={"query": keyword, "orientation": "landscape", "per_page": limit},
+                    headers={"Authorization": settings.pexels_api_key},
+                )
+                response.raise_for_status()
+                for photo in response.json().get("photos", []):
+                    results.append(
+                        ImageAsset(
+                            provider="pexels",
+                            url=photo["src"]["large2x"],
+                            caption=photo.get("alt") or keyword.title(),
+                            attribution=f"Pexels / {photo.get('photographer', 'Contributor')}",
+                            width=photo.get("width"),
+                            height=photo.get("height"),
+                            thumbnail_url=photo["src"].get("medium"),
+                        )
+                    )
+            except Exception:
+                pass
 
-    assets = []
-    for photo in data.get("photos", []):
-        assets.append(
-            ImageAsset(
-                provider="pexels",
-                url=photo["src"]["large2x"],
-                caption=photo.get("alt") or keyword.title(),
-                attribution=f"Pexels / {photo.get('photographer', 'Unknown')}",
-                width=photo.get("width"),
-                height=photo.get("height"),
-                thumbnail_url=photo["src"].get("medium"),
-            )
-        )
-    return assets
+        if settings.pixabay_api_key and len(results) < limit:
+            try:
+                response = await client.get(
+                    "https://pixabay.com/api/",
+                    params={
+                        "key": settings.pixabay_api_key,
+                        "q": keyword,
+                        "image_type": "photo",
+                        "per_page": limit,
+                    },
+                )
+                response.raise_for_status()
+                for hit in response.json().get("hits", []):
+                    results.append(
+                        ImageAsset(
+                            provider="pixabay",
+                            url=hit["largeImageURL"],
+                            caption=hit.get("tags", keyword),
+                            attribution=f"Pixabay / {hit.get('user', 'Contributor')}",
+                            width=hit.get("imageWidth"),
+                            height=hit.get("imageHeight"),
+                            thumbnail_url=hit.get("previewURL"),
+                        )
+                    )
+            except Exception:
+                pass
+
+    return results[:limit]
 
 
-async def _fetch_pixabay(keyword: str, limit: int) -> List[ImageAsset]:
-    if not settings.pixabay_api_key:
-        return []
-
-    params = {
-        "key": settings.pixabay_api_key,
-        "q": keyword,
-        "image_type": "photo",
-        "per_page": limit,
-    }
-
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        response = await client.get("https://pixabay.com/api/", params=params)
-        response.raise_for_status()
-        data = response.json()
-
-    assets = []
-    for hit in data.get("hits", []):
-        assets.append(
-            ImageAsset(
-                provider="pixabay",
-                url=hit["largeImageURL"],
-                caption=hit.get("tags", keyword),
-                attribution=f"Pixabay / {hit.get('user', 'Contributor')}",
-                width=hit.get("imageWidth"),
-                height=hit.get("imageHeight"),
-                thumbnail_url=hit.get("previewURL"),
-            )
-        )
-    return assets
-
-
-async def _generate_ai_image(keyword: str) -> Optional[ImageAsset]:
+async def generate_ai_image(keyword: str) -> Optional[ImageAsset]:
     if not settings.ai_image_endpoint or not settings.ai_image_api_key:
         return None
 
-    payload = {"prompt": f"Photo-realistic editorial image about {keyword}"}
-    headers = {"Authorization": f"Bearer {settings.ai_image_api_key}"}
-
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            response = await client.post(settings.ai_image_endpoint, json=payload, headers=headers)
+            response = await client.post(
+                settings.ai_image_endpoint,
+                json={"prompt": f"Editorial illustration about {keyword}"},
+                headers={"Authorization": f"Bearer {settings.ai_image_api_key}"},
+            )
             response.raise_for_status()
             data = response.json()
-    except Exception as exc:  # pragma: no cover - network variations
-        await notify_failure({"keyword": keyword, "error": str(exc), "stage": "ai_image"})
+            if "url" not in data:
+                return None
+            return ImageAsset(
+                provider="ai",
+                url=data["url"],
+                caption=data.get("caption") or f"AI generated visual for {keyword}",
+                attribution=data.get("attribution"),
+            )
+    except Exception:
         return None
 
-    if "url" not in data:
-        return None
 
-    return ImageAsset(
-        provider="ai",
-        url=data["url"],
-        caption=data.get("caption") or f"AI generated hero for {keyword}",
-        attribution=data.get("attribution"),
-    )
+def select_image(results: List[ImageAsset]) -> Optional[ImageAsset]:
+    return results[0] if results else None
 
 
-async def suggest_images(
-    keyword: str,
-    *,
-    provider_preference: str = "auto",
-    limit: int = 3,
-) -> List[ImageAsset]:
-    """
-    Suggest stock or AI-generated images related to the keyword.
+async def suggest_images(keyword: str, *, provider_preference: str = "auto", limit: int = 3) -> List[ImageAsset]:
+    candidates: List[ImageAsset] = []
 
-    provider_preference accepts `auto`, `pexels`, `pixabay`, or `ai`.
-    """
+    if provider_preference in ("auto", "pexels", "pixabay"):
+        candidates.extend(await search_image(keyword, limit=limit))
 
-    providers = []
-    if provider_preference in ("auto", "pexels"):
-        providers.append(_fetch_pexels(keyword, limit))
-    if provider_preference in ("auto", "pixabay"):
-        providers.append(_fetch_pixabay(keyword, limit))
+    if provider_preference in ("auto", "ai") and len(candidates) < limit:
+        ai_image = await generate_ai_image(keyword)
+        if ai_image:
+            candidates.append(ai_image)
 
-    images: List[ImageAsset] = []
-    provider_results = await asyncio.gather(*providers, return_exceptions=True)
-    for result in provider_results:
-        if isinstance(result, Exception):
-            await notify_failure({"keyword": keyword, "error": str(result), "stage": "image"})
-            continue
-        images.extend(result)
-
-    if provider_preference in ("auto", "ai") and len(images) < limit:
-        ai_asset = await _generate_ai_image(keyword)
-        if ai_asset:
-            images.append(ai_asset)
-
-    if not images:
-        fallback_url = f"https://source.unsplash.com/featured/?{keyword.replace(' ', ',')}"
-        images.append(
+    if not candidates:
+        candidates.append(
             ImageAsset(
-                provider="upload",
-                url=fallback_url,
-                caption=f"Representative imagery for {keyword}",
+                provider="fallback",
+                url=f"https://source.unsplash.com/featured/?{keyword.replace(' ', ',')}",
+                caption=f"Generic imagery for {keyword}",
             )
         )
 
-    return images[:limit]
+    return candidates[:limit]
