@@ -1,60 +1,92 @@
-
-const axios = require('axios');
+const OpenAI = require('openai');
 const { loadConfig } = require('../config');
 
 const config = loadConfig();
+const openAiClients = new Map();
 
-function formatSentence(sentence, tone) {
+function getOpenAIClient(apiKey) {
+  if (!apiKey) {
+    return null;
+  }
+  if (!openAiClients.has(apiKey)) {
+    openAiClients.set(apiKey, new OpenAI({ apiKey }));
+  }
+  return openAiClients.get(apiKey);
+}
+
+function stripHtml(html) {
+  return (html || '')
+    .replace(/<style.*?>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script.*?>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function fallbackCaption(articleHtml, tone, maxChars, sentencesTarget) {
+  const text = stripHtml(articleHtml);
+  if (!text) {
+    return tone === 'formal'
+      ? 'Ringkasan tidak tersedia. Pelajari detail selengkapnya melalui tautan berikut.'
+      : 'Belum ada ringkasan nih, cek langsung artikelnya ya!';
+  }
+
+  const sentences = text.match(/[^.!?]+[.!?]/g) || [text];
+  const selected = sentences.slice(0, Math.max(2, Math.min(sentencesTarget, sentences.length)));
+  let caption = selected.join(' ').trim();
+
   if (tone === 'formal') {
-    return sentence.replace(/!+/g, '.');
+    caption = caption.replace(/!+/g, '.');
   }
-  return sentence;
+
+  if (caption.length > maxChars) {
+    caption = caption.slice(0, maxChars - 1).trimEnd();
+    caption = caption.replace(/[\s,.!?;:-]+$/, '');
+    caption += '…';
+  }
+
+  return caption;
 }
 
-function buildLocalCaption({ title, url, summary, tone, trends = [], includeImage }) {
-  const sentences = [];
-  const trimmedSummary = (summary || '').replace(/\s+/g, ' ').trim();
-  const lead = trimmedSummary ? trimmedSummary : ${title} diringkas untuk kamu.;
-  sentences.push(formatSentence(lead, tone));
+async function generateCaption(articleHtml, tone = config.defaultTone) {
+  const { openai, summarization } = config;
+  const client = getOpenAIClient(openai.apiKey);
+  const maxChars = summarization.maxChars;
+  const sentencesTarget = summarization.sentences;
 
-  if (trends.length) {
-    sentences.push(formatSentence(Highlight terbaru: ., tone));
+  if (!client) {
+    return fallbackCaption(articleHtml, tone, maxChars, sentencesTarget);
   }
 
-  const callToAction = tone === 'formal'
-    ? 'Pelajari detail lengkapnya melalui tautan berikut.'
-    : 'Selengkapnya di artikel utama, langsung cek link-nya.';
+  const prompt = `Buat ringkasan 2-3 kalimat dengan tone ${tone}. Panjang maksimal ${maxChars} karakter. HTML sumber:\n\n${articleHtml}`;
 
-  sentences.push(${callToAction} );
+  try {
+    const response = await client.chat.completions.create({
+      model: openai.model,
+      temperature: 0.6,
+      max_tokens: 180,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Anda adalah copywriter media sosial. Tulis ringkasan singkat 2-3 kalimat, batasi jumlah karakter, dan jaga tone sesuai instruksi.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    });
 
-  if (includeImage) {
-    sentences.push('#visualstory');
-  }
-
-  return sentences.join('\n');
-}
-
-async function generateCaption({ title, url, summary, tone = config.defaultTone, trends = [], includeImage = false }) {
-  if (process.env.CAPTION_API_URL) {
-    try {
-      const response = await axios.post(process.env.CAPTION_API_URL, {
-        title,
-        url,
-        summary,
-        tone,
-        trends,
-        includeImage,
-      });
-      if (response.data && response.data.caption) {
-        return response.data.caption;
-      }
-    } catch (error) {
-      console.warn('caption service unavailable, falling back to local generator', error.message);
+    const text = response.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+      return fallbackCaption(articleHtml, tone, maxChars, sentencesTarget);
     }
-  }
 
-  return buildLocalCaption({ title, url, summary, tone, trends, includeImage });
+    if (text.length > maxChars) {
+      return text.slice(0, maxChars - 1).trimEnd() + '…';
+    }
+    return text;
+  } catch (error) {
+    return fallbackCaption(articleHtml, tone, maxChars, sentencesTarget);
+  }
 }
 
 module.exports = { generateCaption };
-

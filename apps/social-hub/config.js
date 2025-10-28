@@ -1,52 +1,39 @@
-const path = require('path');
-const fs = require('fs');
-const dotenv = require('dotenv');
-
-dotenv.config({ path: path.resolve(__dirname, '.env') });
-
-const DEFAULT_STORAGE = path.resolve(__dirname, '..', '..', 'data', 'social-jobs.json');
-
-function ensureStorageFile(filePath) {
-  if (!fs.existsSync(path.dirname(filePath))) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  }
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, '[]', 'utf8');
-  }
-}
+const DEFAULT_TIMEOUT_MS = Number(process.env.SOCIAL_HTTP_TIMEOUT || 15000);
 
 function loadConfig() {
-  const port = Number(process.env.PORT || 8080);
-  const storagePath = process.env.SOCIAL_STORAGE_PATH || DEFAULT_STORAGE;
-  ensureStorageFile(storagePath);
-
   return {
-    port,
-    version: process.env.SOCIAL_HUB_VERSION || '0.2.0',
-    contentIntelUrl: process.env.CONTENT_INTEL_URL || 'http://localhost:8000',
+    port: Number(process.env.PORT || 8080),
+    version: process.env.SOCIAL_HUB_VERSION || '1.0.0',
     defaultTone: process.env.SOCIAL_DEFAULT_TONE || 'casual',
-    autoPublishDefault: process.env.SOCIAL_AUTO_PUBLISH === 'true',
-    storagePath,
-    providers: {
-      x: {
-        token: process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN || null,
-      },
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY || '',
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    },
+    summarization: {
+      maxChars: Number(process.env.CAPTION_MAX_CHARS || 260),
+      sentences: Number(process.env.CAPTION_SENTENCES || 3),
+    },
+    tokens: {
+      x: process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN || '',
       facebook: {
-        token: process.env.FACEBOOK_GRAPH_TOKEN || process.env.FACEBOOK_APP_TOKEN || null,
-        pageId: process.env.FACEBOOK_PAGE_ID || null,
+        token:
+          process.env.FACEBOOK_ACCESS_TOKEN ||
+          process.env.FACEBOOK_GRAPH_TOKEN ||
+          process.env.FACEBOOK_APP_TOKEN ||
+          '',
+        pageId: process.env.FACEBOOK_PAGE_ID || '',
       },
       instagram: {
-        token: process.env.INSTAGRAM_GRAPH_TOKEN || process.env.INSTAGRAM_APP_TOKEN || null,
-        businessAccountId: process.env.INSTAGRAM_BUSINESS_ID || null,
+        token:
+          process.env.INSTAGRAM_ACCESS_TOKEN ||
+          process.env.INSTAGRAM_GRAPH_TOKEN ||
+          process.env.INSTAGRAM_APP_TOKEN ||
+          '',
+        businessAccountId: process.env.INSTAGRAM_BUSINESS_ID || '',
       },
-      threads: {
-        token: process.env.THREADS_APP_TOKEN || null,
-      },
+      threads: process.env.THREADS_ACCESS_TOKEN || process.env.THREADS_APP_TOKEN || '',
     },
-    sites: (process.env.MULTISITE_ENDPOINTS || '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
   };
 }
 

@@ -1,82 +1,76 @@
 const express = require('express');
 const { generateCaption } = require('../services/caption');
+const { postToX, postToFBIG, postToThreads } = require('../services/social');
 
-function buildRouter({ publisher, config }) {
+function normalisePlatforms(platforms) {
+  if (!Array.isArray(platforms)) {
+    return [];
+  }
+  return Array.from(new Set(platforms.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean)));
+}
+
+module.exports = function createPublishRouter({ config, logger }) {
   const router = express.Router();
 
   router.post('/publish', async (req, res) => {
     const {
       title,
       url,
-      summary,
-      networks = ['x'],
+      article_html: articleHtml,
+      image_url: imageUrl,
       tone = config.defaultTone,
-      trends = [],
-      includeImage = false,
-      image,
-      scheduleAt,
-      manualPublish = !config.autoPublishDefault,
-      sites = [],
+      platforms = [],
     } = req.body || {};
 
-    if (!title || !url) {
-      return res.status(400).json({ error: 'title and url are required' });
+    if (!title || !url || !articleHtml) {
+      return res.status(400).json({ error: 'title, url, and article_html are required' });
     }
 
-    if (!Array.isArray(networks) || networks.length === 0) {
-      return res.status(400).json({ error: 'networks must contain at least one network' });
+    const targetPlatforms = normalisePlatforms(platforms);
+    if (!targetPlatforms.length) {
+      return res.status(400).json({ error: 'platforms must be a non-empty array' });
     }
-
-    const caption = await generateCaption({ title, url, summary, tone, trends, includeImage });
-
-    if (manualPublish) {
-      return res.json({
-        status: 'manual-ready',
-        caption,
-        networks,
-        sites,
-      });
-    }
-
-    const payload = {
-      title,
-      url,
-      summary,
-      caption,
-      tone,
-      trends,
-      includeImage,
-      image,
-      networks,
-      scheduleAt,
-      sites,
-    };
 
     try {
-      const result = await publisher.publish(payload);
-      return res.json({
-        status: result.status,
+      const caption = await generateCaption(articleHtml, tone);
+      const payload = {
+        title,
+        url,
         caption,
-        result,
+        imageUrl,
+        tone,
+      };
+
+      const promises = targetPlatforms.map(async (platform) => {
+        switch (platform) {
+          case 'x':
+          case 'twitter':
+            return postToX(payload, config.tokens.x, config.timeoutMs, logger);
+          case 'facebook':
+            return postToFBIG('facebook', payload, config.tokens.facebook, config.timeoutMs, logger);
+          case 'instagram':
+            return postToFBIG('instagram', payload, config.tokens.instagram, config.timeoutMs, logger);
+          case 'threads':
+            return postToThreads(payload, config.tokens.threads, config.timeoutMs, logger);
+          default:
+            return { platform, ok: false, error: 'Unsupported platform' };
+        }
+      });
+
+      const results = await Promise.all(promises);
+
+      res.json({
+        title,
+        url,
+        caption,
+        tone,
+        results,
       });
     } catch (error) {
-      return res.status(502).json({
-        error: 'Failed to publish to networks',
-        detail: error.message,
-      });
+      logger.error({ error: error.message }, 'Publish request failed');
+      res.status(500).json({ error: 'Failed to publish content', detail: error.message });
     }
-  });
-
-  router.get('/publish/scheduled', (_req, res) => {
-    res.json({ jobs: publisher.listScheduled() });
-  });
-
-  router.get('/publish/history', (req, res) => {
-    const limit = Math.min(Number(req.query.limit) || 20, 100);
-    res.json({ history: publisher.listHistory(limit) });
   });
 
   return router;
-}
-
-module.exports = buildRouter;
+};

@@ -1,34 +1,29 @@
-/*
- * Entry point for the Social Hub microservice.
- *
- * Provides caption generation, social publishing, scheduling, and history
- * endpoints for the AIO Suite.
- */
-
 const express = require('express');
+const pino = require('pino');
 const { loadConfig } = require('./config');
-const { createPublisher } = require('./services/social');
-const buildRouter = require('./routes/publish');
+const createPublishRouter = require('./routes/publish');
 
-async function bootstrap() {
-  const app = express();
+function bootstrap() {
   const config = loadConfig();
-  const publisher = await createPublisher(config);
+  const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
+  const app = express();
 
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'social-hub', version: config.version });
   });
 
-  app.use('/api', buildRouter({ publisher, config }));
+  app.use('/', createPublishRouter({ config, logger }));
+
+  app.use((err, _req, res, _next) => {
+    logger.error({ err }, 'Unhandled error');
+    res.status(500).json({ error: 'Internal server error' });
+  });
 
   app.listen(config.port, () => {
-    console.log(`Social hub listening on port ${config.port}`);
+    logger.info({ port: config.port }, 'Social hub listening');
   });
 }
 
-bootstrap().catch((error) => {
-  console.error('Failed to start social hub', error);
-  process.exit(1);
-});
+bootstrap();
