@@ -1,3 +1,7 @@
+const dotenv = require('dotenv');
+
+dotenv.config();
+
 const DEFAULT_TIMEOUT_MS = Number(process.env.SOCIAL_HTTP_TIMEOUT || 15000);
 
 function loadConfig() {

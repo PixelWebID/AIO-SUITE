@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Iterable, List, Optional
 
 import feedparser
 import httpx
 from trafilatura import extract as trafilatura_extract
+
+from .ai_providers import AIClient
 
 
 @dataclass
@@ -54,3 +56,16 @@ async def parse_rss_feed(feed_url: str, max_items: int = 3) -> List[RSSItem]:
         )
 
     return items
+
+
+async def rewrite_content(
+    text: str,
+    tone: str,
+    *,
+    provider_priority: Optional[Iterable[str]] = None,
+) -> str:
+    client = AIClient(provider_priority or ["openai", "deepseek", "openrouter", "gemini", "llama"])
+    rewritten = await client.rewrite(text, tone)
+    if not rewritten.strip():
+        return f"<p>{text}</p>"
+    return rewritten

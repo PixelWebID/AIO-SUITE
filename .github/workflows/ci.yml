@@ -1,35 +1,83 @@
-name: Continuous Integration
+name: CI
 
 on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
   pull_request:
-    branches:
-      - main
-      - develop
 
 jobs:
-  build:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/content-intel/requirements.txt pytest
+      - name: Run pytest
+        working-directory: apps/content-intel
+        run: pytest
+
+  node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - uses: actions/setup-python@v5
+          node-version: "20"
+      - name: Install dependencies
+        working-directory: apps/social-hub
+        run: npm install --no-audit --no-fund
+      - name: Run tests
+        working-directory: apps/social-hub
+        run: npm test
+
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
         with:
-          python-version: '3.11'
-      - name: Install Node dependencies for social hub
-        run: |
-          cd apps/social-hub
-          if [ -f package.json ]; then
-            npm install --ignore-scripts --no-audit
-          fi
-      - name: Install Python dependencies for content intel
-        run: |
-          cd apps/content-intel
-          if [ -f requirements.txt ]; then
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-          fi
-      - name: Static checks
-        run: |
-          echo "Basic CI run completed"
+          php-version: "8.2"
+          coverage: none
+          extensions: mbstring
+      - name: Install composer dependencies
+        working-directory: apps/wp-plugin
+        run: composer install --no-progress --no-interaction
+      - name: Run phpcs
+        working-directory: apps/wp-plugin
+        run: vendor/bin/phpcs aio-seo
+      - name: Run phpunit
+        working-directory: apps/wp-plugin
+        run: vendor/bin/phpunit -c phpunit.xml.dist
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [python, node, php]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build content-intel image
+        run: docker build -t aio-suite/content-intel:ci ./apps/content-intel
+      - name: Build social-hub image
+        run: docker build -t aio-suite/social-hub:ci ./apps/social-hub
+
+  deploy:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          export_default_credentials: true
+      - name: Deploy to Cloud Run
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          TAG: ${{ github.ref_name }}
+        run: ./infra/gcp/deploy.sh

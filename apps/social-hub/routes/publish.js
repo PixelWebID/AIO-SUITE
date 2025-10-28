@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const { generateCaption } = require('../services/caption');
 const { postToX, postToFBIG, postToThreads } = require('../services/social');
 
@@ -57,6 +57,8 @@ module.exports = function createPublishRouter({ config, logger }) {
         }
       });
 
+      logger.info({ title, platforms: targetPlatforms }, 'Publishing request received');
+
       const results = await Promise.all(promises);
 
       res.json({
@@ -74,3 +76,4 @@ module.exports = function createPublishRouter({ config, logger }) {
 
   return router;
 };
+

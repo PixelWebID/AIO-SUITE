@@ -19,7 +19,7 @@ from ..models.schemas import (
 )
 from ..services.ai_providers import AIClient
 from ..services.images import suggest_images
-from ..services.rss import parse_rss_feed
+from ..services.rss import parse_rss_feed, rewrite_content
 from ..services.scraper import gather_reference_content
 from ..services.trends import fetch_keyword_trends
 from ..utils.db import (
@@ -215,8 +215,11 @@ async def generate_from_rss(payload: RSSRequest) -> ArticleResponse:
         raise HTTPException(status_code=404, detail="Feed did not return any entries")
 
     primary = entries[0]
-    client = AIClient(["openai", "deepseek", "openrouter", "gemini", "llama"])
-    rewritten_html = await client.rewrite(primary.body_html, payload.tone)
+    rewritten_html = await rewrite_content(
+        primary.body_html,
+        payload.tone,
+        provider_priority=["openai", "deepseek", "openrouter", "gemini", "llama"],
+    )
 
     references = await gather_reference_content(primary.title or payload.keyword or "feed", payload.geo)
     trends = await fetch_keyword_trends(payload.keyword or primary.title, payload.geo)
@@ -261,7 +264,16 @@ async def generate_from_rss(payload: RSSRequest) -> ArticleResponse:
     )
 
     history_id = str(uuid.uuid4())
-    store_article(history_id, primary.title or payload.keyword or "RSS", payload.geo, payload.tone, rewritten_html, meta.dict(), metrics.dict(), warnings)
+    store_article(
+        history_id,
+        primary.title or payload.keyword or "RSS",
+        payload.geo,
+        payload.tone,
+        rewritten_html,
+        meta.dict(),
+        metrics.dict(),
+        warnings,
+    )
     store_references(history_id, [_to_reference_dict(ref) for ref in references])
     log_event(history_id, 'info', 'rss_rewrite', {'feed': str(payload.feed_url)})
 

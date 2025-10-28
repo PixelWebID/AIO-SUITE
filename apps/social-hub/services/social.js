@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+ï»¿const fetch = require('node-fetch');
 
 function withTimeout(timeoutMs) {
   return async (url, options = {}) => {
@@ -16,9 +16,17 @@ function withTimeout(timeoutMs) {
 function joinCaptionAndUrl(caption, url, limit) {
   const combined = [caption.trim(), url ? url.trim() : ''].filter(Boolean).join(' ');
   if (limit && combined.length > limit) {
-    return combined.slice(0, limit - 1).trimEnd() + '…';
+    return combined.slice(0, limit - 1).trimEnd() + '.';
   }
   return combined;
+}
+
+function buildRateLimitMessage(service, response, fallback) {
+  if (!response || response.status !== 429) {
+    return fallback;
+  }
+  const retryAfter = response.headers?.get('retry-after');
+  return `Rate limited by ${service}${retryAfter ? `, retry after ${retryAfter}s` : ''}`;
 }
 
 async function postToX(payload, tokens, timeoutMs, logger) {
@@ -41,8 +49,10 @@ async function postToX(payload, tokens, timeoutMs, logger) {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      logger.error({ platform: 'x', data }, 'Failed to post to X');
-      return { platform: 'x', ok: false, error: data.error || response.statusText };
+      const fallback = data.error || data.title || response.statusText;
+      const error = buildRateLimitMessage('X API', response, fallback);
+      logger.error({ platform: 'x', status: response.status, data }, 'Failed to post to X');
+      return { platform: 'x', ok: false, error };
     }
 
     return { platform: 'x', ok: true, id: data.data?.id || null };
@@ -76,8 +86,10 @@ async function postToFBIG(platform, payload, tokens, timeoutMs, logger) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        logger.error({ platform, data }, 'Facebook Graph API error');
-        return { platform, ok: false, error: data.error?.message || response.statusText };
+        const fallback = data.error?.message || response.statusText;
+        const error = buildRateLimitMessage('Facebook API', response, fallback);
+        logger.error({ platform, status: response.status, data }, 'Facebook Graph API error');
+        return { platform, ok: false, error };
       }
       return { platform, ok: true, id: data.id || null };
     } catch (error) {
@@ -105,8 +117,10 @@ async function postToFBIG(platform, payload, tokens, timeoutMs, logger) {
       );
       const mediaData = await mediaResponse.json().catch(() => ({}));
       if (!mediaResponse.ok) {
-        logger.error({ platform, mediaData }, 'Instagram media creation failed');
-        return { platform, ok: false, error: mediaData.error?.message || mediaResponse.statusText };
+        const fallback = mediaData.error?.message || mediaResponse.statusText;
+        const error = buildRateLimitMessage('Instagram API', mediaResponse, fallback);
+        logger.error({ platform, status: mediaResponse.status, mediaData }, 'Instagram media creation failed');
+        return { platform, ok: false, error };
       }
 
       const publishParams = new URLSearchParams({
@@ -119,8 +133,10 @@ async function postToFBIG(platform, payload, tokens, timeoutMs, logger) {
       );
       const publishData = await publishResponse.json().catch(() => ({}));
       if (!publishResponse.ok) {
-        logger.error({ platform, publishData }, 'Instagram publish failed');
-        return { platform, ok: false, error: publishData.error?.message || publishResponse.statusText };
+        const fallback = publishData.error?.message || publishResponse.statusText;
+        const error = buildRateLimitMessage('Instagram API', publishResponse, fallback);
+        logger.error({ platform, status: publishResponse.status, publishData }, 'Instagram publish failed');
+        return { platform, ok: false, error };
       }
 
       return { platform, ok: true, id: publishData.id || mediaData.id || null };

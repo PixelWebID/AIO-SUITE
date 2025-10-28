@@ -1,145 +1,129 @@
-ï»¿# AIO Suite
+# AIO Suite
 
-AIO Suite is a multi-app platform that blends WordPress editorial tooling, AI-assisted
-content creation, and social media distribution. The monorepo is organised as follows:
+AIO Suite delivers AI-assisted content production for WordPress with automated social publishing. The monorepo bundles three services plus infrastructure tooling:
 
 ```
 aio-suite/
   apps/
-    wp-plugin/
-      aio-seo/
-        aio-seo.php          # WordPress plugin bootstrap & REST handlers
-        src/                 # Admin dashboards (modular ES scripts)
-        languages/           # Localisation assets
-    content-intel/
-      app/                   # FastAPI microservice for content intelligence
-    social-hub/
-      routes/ + services/    # Express routing + social distribution layer
+    wp-plugin/            # WordPress admin plugin (editor UI + REST bridge)
+    content-intel/        # FastAPI microservice (SERP, LLM orchestration)
+    social-hub/           # Node/Express caption & social delivery service
   infra/
-    docker/                  # Local docker-compose + nginx
-    gcp/                     # Cloud Run deployment scripts
+    docker/               # Docker Compose stack + nginx config
+    gcp/                  # Cloud Run deployment scripts
   docs/
-    overview.md              # Architecture guide
-  .github/workflows/
-    ci.yml                   # Unified lint/build/test pipeline
+    overview.md           # Detailed architecture notes
+  .github/workflows/      # CI pipeline (pytest/jest/phpunit + Docker build)
 ```
-
-Each service now ships with production-ready functionality: multi-provider LLM routing,
-Google Trends enrichment, RSS rewriting, duplicate detection (SimHash + checksums),
-internal link discovery (sitemap parsing), WordPress settings encryption, and omnichannel
-social scheduling.
 
 ## Services
 
-### Content Intelligence API (FastAPI)
+### Content Intelligence (FastAPI)
+- Multi-provider SERP aggregation (Google/Bing/Serper/custom URLs)
+- Trend analysis via Google Trends
+- LLM orchestration with automatic failover (OpenAI, DeepSeek, OpenRouter, Gemini, Llama)
+- Readability + duplication guards (Flesch, FK grade, SimHash)
+- Image suggestions (Pexels, Pixabay, optional AI endpoint)
+- SQLite-backed history/logging out of the box (replace `DATABASE_URL` for production)
 
-Environment-driven configuration lives in `apps/content-intel/app/config.py`. Key features
-include reference aggregation (Google/Bing/Serper/custom URLs), LLM brief orchestration with
-deterministic fallbacks, SEO/E-E-A-T validation, image sourcing (Pexels/Pixabay/AI), Google
-Trends pulls, and activity/history persistence via SQLite.
-
-Example usage:
-
+Example request:
 ```bash
-curl -X POST "http://localhost:8000/api/content/generate_article" \
-  -H "Content-Type: application/json" \
+curl -X POST "$CONTENT_INTEL_URL/api/content/generate_article" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "keyword": "wisata kuliner bandung",
-    "geo": "ID",
-    "tone": "friendly",
-    "min_words": 850,
-    "include_images": true,
-    "sitemap_url": "https://your-site.com/sitemap.xml",
-    "secondary_keywords": ["cafe instagramable", "jajanan malam"]
-  }'
+        "keyword": "wisata kuliner bandung",
+        "geo": "ID",
+        "tone": "friendly",
+        "include_images": true,
+        "sitemap_url": "https://your-site.com/sitemap.xml"
+      }'
 ```
 
-```bash
-curl "http://localhost:8000/api/content/history?limit=5"
-```
+### Social Hub (Node/Express)
+- Tone-aware caption generation using OpenAI with character/ sentence controls
+- Platform adapters for X, Facebook, Instagram (Graph API), Threads placeholder
+- Structured per-platform result payloads for monitoring/retries
 
+Example publish:
 ```bash
-curl -X POST "http://localhost:8000/api/content/generate_from_rss" \
-  -H "Content-Type: application/json" \
+curl -X POST "$SOCIAL_HUB_URL/publish" \
+  -H 'Content-Type: application/json' \
   -d '{
-    "feed_url": "https://news.google.com/rss/search?q=bandung",
-    "geo": "ID",
-    "tone": "formal"
-  }'
+        "title": "Panduan Liburan Bandung",
+        "url": "https://your-site.com/panduan",
+        "article_html": "<p>Agenda seru di Bandung.</p>",
+        "platforms": ["x", "facebook"],
+        "tone": "casual"
+      }'
 ```
 
-### Social Hub (Express)
-
-`apps/social-hub` exposes caption generation, multi-network delivery (X, Facebook, Instagram,
-Threads fallback), scheduling, multi-site propagation, and history storage. Configuration is
-provided via `.env` or environment variables (see `config.js`).
-
-Sample publish call:
-
-```bash
-curl -X POST "http://localhost:8080/api/publish" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Panduan Liburan Bandung",
-    "url": "https://your-site.com/panduan-liburan-bandung",
-    "summary": "Agenda 3 hari penuh kuliner dan hidden gem.",
-    "networks": ["x", "facebook"],
-    "tone": "casual",
-    "scheduleAt": "2025-10-30T09:00:00+07:00"
-  }'
-```
-
-```bash
-curl "http://localhost:8080/api/publish/scheduled"
-```
-
-### WordPress Plugin (AIO Content Suite)
-
-Located at `apps/wp-plugin/aio-seo`. The plugin registers encrypted settings, bridges to the
-content-intel service, exposes activity/history lookups, ingests social webhooks using a shared
-token, and ships a modern admin UI (auto/manual editor, live preview, keyword highlights,
-history explorer).
-
-REST entry points inside WordPress (`wp-json/aio/v1/...`):
-
-```bash
-# Fetch settings (requires authenticated WP nonce)
-curl -H "X-WP-Nonce: <nonce>" "https://your-site.com/wp-json/aio/v1/settings"
-
-# Trigger article generation via WordPress bridge
-curl -X POST "https://your-site.com/wp-json/aio/v1/generate" \
-  -H "Content-Type: application/json" \
-  -H "X-WP-Nonce: <nonce>" \
-  -d '{
-    "keyword": "strategi marketing umkm",
-    "geo": "ID",
-    "tone": "authoritative",
-    "include_images": true
-  }'
-
-# Retrieve activity log
-curl -H "X-WP-Nonce: <nonce>" "https://your-site.com/wp-json/aio/v1/activity?limit=10"
-```
-
-To ingest scheduled social posts (used by the Social Hub), send:
-
-```bash
-curl -X POST "https://your-site.com/wp-json/aio/v1/social" \
-  -H "Content-Type: application/json" \
-  -H "X-AIO-Token: $AIO_SUITE_SOCIAL_TOKEN" \
-  -d '{
-    "title": "Thread Instagram",
-    "caption": "Highlight destinasi kuliner terbaru.",
-    "url": "https://your-site.com/panduan-kuliner"
-  }'
-```
+### WordPress Plugin (apps/wp-plugin/aio-seo)
+- React-free admin panels (vanilla JS) for Editor, Preview, History, Settings
+- REST endpoints: `/wp-json/aio/v1/generate`, `/wp-json/aio/v1/history`, `/wp-json/aio/v1/social`, etc.
+- Encrypted API-key storage with multisite propagation
+- Configurable provider order, auto-publish toggles, and sitemap-driven internal linking
 
 ## Local Development
 
-* **Content Intelligence** â€“ `cd apps/content-intel && uvicorn app.main:app --reload`
-* **Social Hub** â€“ `cd apps/social-hub && npm install && npm run dev`
-* **WordPress Plugin** â€“ symlink `apps/wp-plugin/aio-seo` into `wp-content/plugins` and activate
-  from the WP admin.
+1. **WordPress stack**
+   ```bash
+   docker compose -f infra/docker/wp-compose.yml up -d
+   ```
+   - WordPress: `http://localhost:8081`
+   - MariaDB + Redis volumes stay under Docker-managed storage
+   - Plugin mounted read-only to `/wp-content/plugins/aio-seo`
 
-The `/infra/docker` directory provides compose files for running all services behind nginx if you
-prefer a containerised workflow.
+2. **Backend services**
+   ```bash
+   # Content Intelligence
+   cd apps/content-intel
+   uvicorn app.main:app --reload
+
+   # Social Hub
+   cd apps/social-hub
+   npm install
+   npm start
+   ```
+
+3. **Reverse proxy (optional)**
+   Use the supplied `infra/docker/nginx.conf` inside an nginx container to proxy `/api/content/*` and `/publish` with gzip + security headers.
+
+## Deployment
+
+A Cloud Run deployment helper is available:
+```bash
+export PROJECT_ID=your-gcp-project
+export REGION=us-central1
+./infra/gcp/deploy.sh
+```
+The script builds and pushes the Content Intelligence and Social Hub images to GCR, deploys them to Cloud Run, and prints the resulting URLs. Configure secrets (e.g., `openai_key`) in Secret Manager before running.
+
+## Continuous Integration
+
+`.github/workflows/ci.yml` runs on every push/PR:
+- **Python** – install requirements + `pytest`
+- **Node** – install dependencies + `jest`
+- **PHP** – `composer install`, `phpcs`, `phpunit`
+- **Docker** – build images for content-intel and social-hub
+- Optional Cloud Run deploy on tags `v*` (requires `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SA_KEY` secrets)
+
+## Environment Variables
+
+| Service | Key variables |
+|---------|---------------|
+| Content Intelligence | `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `PEXELS_API_KEY`, `PIXABAY_API_KEY`, `DATABASE_URL`, `GOOGLE_SEARCH_API_KEY`, `BING_SEARCH_API_KEY`, `AI_IMAGE_ENDPOINT`, `AI_IMAGE_API_KEY` |
+| Social Hub | `OPENAI_API_KEY`, `SOCIAL_DEFAULT_TONE`, `SOCIAL_HTTP_TIMEOUT`, `X_BEARER_TOKEN`, `FACEBOOK_ACCESS_TOKEN`, `FACEBOOK_PAGE_ID`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_BUSINESS_ID`, `THREADS_ACCESS_TOKEN` |
+| WordPress Plugin | `CONTENT_INTEL_URL`, `SOCIAL_HUB_URL`, `AIO_SUITE_ENC_KEY`, `AIO_SUITE_PROVIDER_KEY`, `AIO_SUITE_SOCIAL_TOKEN` |
+
+## Useful curl Commands
+
+```bash
+# Content health
+curl "$CONTENT_INTEL_URL/health"
+
+# Social hub health
+curl "$SOCIAL_HUB_URL/health"
+
+# Gap analysis
+curl "$CONTENT_INTEL_URL/api/analysis/content_gap?keyword=bali%20travel&geo=ID"
+```
